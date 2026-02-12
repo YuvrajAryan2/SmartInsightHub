@@ -1,1 +1,24 @@
-node_modules
+# Node
+node_modules/
+dist/
+
+# Env files
+*.env
+*.env.*
+
+# Terraform state & cache
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/crash.log
+infra/lambda_build/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
