@@ -27,6 +27,18 @@ variable "bedrock_model_id" {
   description = "Amazon Bedrock model ID to use for analysis"
 }
 
+variable "bedrock_region" {
+  type        = string
+  default     = "ca-central-1"
+  description = "AWS region where Bedrock is available. Defaults to ca-central-1 (Canada)."
+}
+
+variable "ai_provider" {
+  type        = string
+  default     = "bedrock"
+  description = "AI provider for feedback analysis: 'bedrock' (default) or 'comprehend'"
+}
+
 variable "api_stage_name" {
   type        = string
   default     = "prod"

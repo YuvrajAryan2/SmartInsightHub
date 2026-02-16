@@ -71,6 +71,16 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 
   statement {
+    sid    = "ComprehendAnalyze"
+    effect = "Allow"
+    actions = [
+      "comprehend:DetectSentiment",
+      "comprehend:DetectKeyPhrases"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "S3Export"
     effect = "Allow"
     actions = [
@@ -147,6 +157,8 @@ resource "aws_lambda_function" "feedback_api" {
       FEEDBACK_TABLE_NAME = aws_dynamodb_table.feedback_table.name
       EXPORT_BUCKET_NAME  = aws_s3_bucket.export_bucket.bucket
       BEDROCK_MODEL_ID    = var.bedrock_model_id
+      BEDROCK_REGION      = var.bedrock_region
+      AI_PROVIDER         = var.ai_provider
     }
   }
 

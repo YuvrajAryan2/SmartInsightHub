@@ -147,7 +147,7 @@ const App: React.FC = () => {
           }}
         >
           <Typography sx={{ color: "rgba(255,255,255,0.6)" }}>
-            Powered by Amazon Bedrock & AWS Serverless
+            Powered by AWS (Comprehend / Bedrock) & AWS Serverless
           </Typography>
         </Box>
       </Box>

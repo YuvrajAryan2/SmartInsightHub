@@ -12,10 +12,13 @@ EXPORT_BUCKET = os.environ.get("EXPORT_BUCKET_NAME")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"
 )
+BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "ca-central-1")
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "bedrock").strip().lower()
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
-bedrock = boto3.client("bedrock-runtime")
+bedrock = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+comprehend = boto3.client("comprehend")
 s3 = boto3.client("s3") if EXPORT_BUCKET else None
 
 
@@ -109,9 +112,9 @@ def handle_post_feedback(event: Dict[str, Any]) -> Dict[str, Any]:
         "body": json.dumps({"message": "Failed to store feedback"}),
     }
 
-  # Call Bedrock to analyze the feedback
+  # Call AI service to analyze the feedback (Bedrock or Comprehend)
   try:
-    ai_result = call_bedrock_analysis(message)
+    ai_result = call_ai_analysis(message)
     sentiment = ai_result.get("sentiment")
     topics = ai_result.get("topics") or []
     summary = ai_result.get("summary")
@@ -141,7 +144,7 @@ def handle_post_feedback(event: Dict[str, Any]) -> Dict[str, Any]:
       )
   except Exception as exc:  # pylint: disable=broad-except
     # Log but don't fail the whole request; AI is best-effort
-    print(f"Bedrock analysis failed: {exc}")
+    print(f"AI analysis failed: {exc}")
 
   return {
       "statusCode": 201,
@@ -195,6 +198,62 @@ def handle_get_insights(event: Dict[str, Any]) -> Dict[str, Any]:  # pylint: dis
         "headers": _cors_headers(),
         "body": json.dumps({"message": "Failed to load insights"}),
     }
+
+
+def call_ai_analysis(message: str) -> Dict[str, Any]:
+  """Dispatch to Bedrock or Comprehend based on AI_PROVIDER."""
+  if AI_PROVIDER == "comprehend":
+    return call_comprehend_analysis(message)
+  return call_bedrock_analysis(message)
+
+
+def call_comprehend_analysis(message: str) -> Dict[str, Any]:
+  """
+  Uses Amazon Comprehend (available in ca-central-1) for sentiment and key phrases.
+  Summary is derived from key themes since Comprehend does not generate summaries.
+  """
+  if not message or not message.strip():
+    return {"sentiment": "neutral", "topics": [], "summary": ""}
+
+  text = message.strip()
+  # Comprehend limits: DetectSentiment 5KB, DetectKeyPhrases 100KB
+  if len(text) > 5000:
+    text = text[:5000]
+
+  sentiment_resp = comprehend.detect_sentiment(Text=text, LanguageCode="en")
+  sentiment_raw = (sentiment_resp.get("Sentiment") or "NEUTRAL").upper()
+  sentiment_map = {
+      "POSITIVE": "positive",
+      "NEGATIVE": "negative",
+      "NEUTRAL": "neutral",
+      "MIXED": "neutral",
+  }
+  sentiment = sentiment_map.get(sentiment_raw, "neutral")
+
+  key_phrases_resp = comprehend.detect_key_phrases(Text=text, LanguageCode="en")
+  topics = [
+      (p.get("Text") or "").strip()
+      for p in key_phrases_resp.get("KeyPhrases", [])
+      if (p.get("Text") or "").strip()
+  ]
+  # Dedupe and cap
+  seen = set()
+  unique_topics = []
+  for t in topics:
+    tl = t.lower()
+    if tl not in seen and len(unique_topics) < 10:
+      seen.add(tl)
+      unique_topics.append(t)
+
+  summary = ""
+  if unique_topics:
+    summary = "Key themes: " + ", ".join(unique_topics[:8])
+
+  return {
+      "sentiment": sentiment,
+      "topics": unique_topics,
+      "summary": summary,
+  }
 
 
 def call_bedrock_analysis(message: str) -> Dict[str, Any]:
