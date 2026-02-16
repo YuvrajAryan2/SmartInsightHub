@@ -6,16 +6,16 @@ import App from "./App";
 
 const theme = createTheme({
   palette: {
-    mode: "light",
-    primary: {
-      main: "#1976d2"
-    },
-    secondary: {
-      main: "#9c27b0"
-    },
+    mode: "dark",
+    primary: { main: "#8b5cf6" },
+    secondary: { main: "#ec4899" },
     background: {
-      default: "#f5f5f5"
+      default: "#0f172a",
+      paper: "rgba(255,255,255,0.05)"
     }
+  },
+  typography: {
+    fontFamily: "Inter, sans-serif"
   }
 });
 
@@ -29,4 +29,3 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </ThemeProvider>
   </React.StrictMode>
 );
-

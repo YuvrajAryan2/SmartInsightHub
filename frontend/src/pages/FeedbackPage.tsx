@@ -48,27 +48,60 @@ const FeedbackPage: React.FC = () => {
   };
 
   return (
-    <Box maxWidth={600} mx="auto">
-      <Typography variant="h4" gutterBottom>
+    <Box maxWidth={600} width="100%">
+      <Typography
+        variant="h4"
+        gutterBottom
+        sx={{
+          fontWeight: 600,
+          textAlign: "center",
+          background: "linear-gradient(90deg, #8b5cf6, #ec4899)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent"
+        }}
+      >
         Employee Feedback
       </Typography>
-      <Typography variant="body1" color="text.secondary" gutterBottom>
-        Share your thoughts. Our AI will extract sentiment, topics, and
-        summaries to help HR and managers make better decisions.
+
+      <Typography
+        variant="body1"
+        color="text.secondary"
+        textAlign="center"
+        mb={3}
+      >
+        Share your thoughts. Our AI extracts sentiment, topics, and summaries
+        to help HR make better decisions.
       </Typography>
-      <Card sx={{ mt: 3 }}>
+
+      <Card
+        sx={{
+          backdropFilter: "blur(20px)",
+          background: "rgba(255, 255, 255, 0.08)",
+          borderRadius: 4,
+          border: "1px solid rgba(255,255,255,0.1)",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)"
+        }}
+      >
         <CardContent>
           <form onSubmit={handleSubmit}>
-            <Stack spacing={2}>
+            <Stack spacing={3}>
               {success && <Alert severity="success">{success}</Alert>}
               {error && <Alert severity="error">{error}</Alert>}
+
               <TextField
                 label="Name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 fullWidth
                 required
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    borderRadius: 2
+                  }
+                }}
               />
+
               <TextField
                 label="Email"
                 type="email"
@@ -76,7 +109,14 @@ const FeedbackPage: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 fullWidth
                 required
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    borderRadius: 2
+                  }
+                }}
               />
+
               <TextField
                 label="Feedback"
                 value={message}
@@ -85,18 +125,40 @@ const FeedbackPage: React.FC = () => {
                 required
                 multiline
                 minRows={4}
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    borderRadius: 2
+                  }
+                }}
               />
-              <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}>
+
+              <Box display="flex" justifyContent="flex-end">
                 <Button
                   type="submit"
-                  variant="contained"
-                  color="primary"
                   disabled={loading}
-                  startIcon={
-                    loading ? <CircularProgress size={20} color="inherit" /> : undefined
-                  }
+                  sx={{
+                    borderRadius: 3,
+                    px: 4,
+                    py: 1.2,
+                    textTransform: "none",
+                    fontWeight: 600,
+                    color: "#ffffff",  // 🔥 FORCE WHITE TEXT
+                    background:
+                      "linear-gradient(90deg, #6d28d9, #7c3aed)", // softer purple
+                    boxShadow: "none", // remove neon glow
+                    transition: "all 0.3s ease",
+                    "&:hover": {
+                      background:
+                        "linear-gradient(90deg, #5b21b6, #6d28d9)"
+                    }
+                  }}
                 >
-                  {loading ? "Submitting..." : "Submit Feedback"}
+                  {loading ? (
+                    <CircularProgress size={20} sx={{ color: "#fff" }} />
+                  ) : (
+                    "Share Feedback"
+                  )}
                 </Button>
               </Box>
             </Stack>
@@ -108,4 +170,3 @@ const FeedbackPage: React.FC = () => {
 };
 
 export default FeedbackPage;
-

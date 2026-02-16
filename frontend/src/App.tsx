@@ -10,50 +10,132 @@ import {
 } from "@mui/material";
 import FeedbackPage from "./pages/FeedbackPage";
 import InsightsPage from "./pages/InsightsPage";
+import bgImage from "./assets/bg.png";
 
 const App: React.FC = () => {
   const location = useLocation();
 
   return (
-    <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <AppBar position="static" color="primary" elevation={1}>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Smart Talent Insight Hub
+    <Box sx={{ minHeight: "100vh", position: "relative", overflow: "hidden" }}>
+      
+      {/* Blurred Background */}
+      <Box
+        sx={{
+          position: "fixed",
+          inset: 0,
+          backgroundImage: `url(${bgImage})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+          filter: "blur(10px)",
+          transform: "scale(1.1)",
+          zIndex: -2
+        }}
+      />
+
+      {/* Dark Overlay */}
+      <Box
+        sx={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.75)",
+          zIndex: -1
+        }}
+      />
+
+      {/* Main Content */}
+      <Box
+        sx={{
+          position: "relative",
+          zIndex: 1,
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column"
+        }}
+      >
+        {/* Navbar */}
+        <AppBar
+          position="static"
+          elevation={0}
+          sx={{
+            backdropFilter: "blur(20px)",
+            background: "rgba(255,255,255,0.05)",
+            borderBottom: "1px solid rgba(255,255,255,0.1)"
+          }}
+        >
+          <Toolbar>
+            <Typography
+              variant="h6"
+              sx={{
+                flexGrow: 1,
+                fontWeight: 600,
+                background:
+                  "linear-gradient(90deg, #8b5cf6, #ec4899)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent"
+              }}
+            >
+              Smart Talent Insight Hub
+            </Typography>
+
+            <Button
+              component={Link}
+              to="/"
+              sx={{
+                mr: 2,
+                color: "#fff",
+                borderRadius: 3,
+                background:
+                  location.pathname === "/"
+                    ? "linear-gradient(90deg, #8b5cf6, #ec4899)"
+                    : "transparent"
+              }}
+            >
+              Feedback
+            </Button>
+
+            <Button
+              component={Link}
+              to="/insights"
+              sx={{
+                color: "#fff",
+                borderRadius: 3,
+                background:
+                  location.pathname === "/insights"
+                    ? "linear-gradient(90deg, #8b5cf6, #ec4899)"
+                    : "transparent"
+              }}
+            >
+              Insights
+            </Button>
+          </Toolbar>
+        </AppBar>
+
+        {/* Pages */}
+        <Container sx={{ flexGrow: 1, py: 6 }}>
+          <Routes>
+            <Route path="/" element={<FeedbackPage />} />
+            <Route path="/insights" element={<InsightsPage />} />
+          </Routes>
+        </Container>
+
+        {/* Footer */}
+        <Box
+          component="footer"
+          sx={{
+            py: 3,
+            textAlign: "center",
+            backdropFilter: "blur(20px)",
+            background: "rgba(255,255,255,0.03)"
+          }}
+        >
+          <Typography sx={{ color: "rgba(255,255,255,0.6)" }}>
+            Powered by Amazon Bedrock & AWS Serverless
           </Typography>
-          <Button
-            color="inherit"
-            component={Link}
-            to="/"
-            variant={location.pathname === "/" ? "outlined" : "text"}
-            sx={{ mr: 1 }}
-          >
-            Feedback
-          </Button>
-          <Button
-            color="inherit"
-            component={Link}
-            to="/insights"
-            variant={location.pathname === "/insights" ? "outlined" : "text"}
-          >
-            Insights
-          </Button>
-        </Toolbar>
-      </AppBar>
-      <Container sx={{ flexGrow: 1, py: 4 }}>
-        <Routes>
-          <Route path="/" element={<FeedbackPage />} />
-          <Route path="/insights" element={<InsightsPage />} />
-        </Routes>
-      </Container>
-      <Box component="footer" sx={{ py: 2, textAlign: "center", mt: "auto" }}>
-        <Typography variant="body2" color="text.secondary">
-          Powered by Amazon Bedrock & AWS Serverless
-        </Typography>
+        </Box>
       </Box>
     </Box>
   );
 };
 
 export default App;
-
