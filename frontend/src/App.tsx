@@ -43,6 +43,23 @@ const App: React.FC = () => {
         }}
       />
 
+      {/* ✨ Cute Floating Right-Side Glow */}
+      <Box
+        sx={{
+          position: "absolute",
+          right: "6%",
+          top: "35%",
+          width: 280,
+          height: 280,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(139,92,246,0.5) 0%, rgba(236,72,153,0.3) 60%, transparent 80%)",
+          filter: "blur(60px)",
+          animation: "float 6s ease-in-out infinite",
+          zIndex: 0
+        }}
+      />
+
       {/* Main Content */}
       <Box
         sx={{
@@ -134,6 +151,17 @@ const App: React.FC = () => {
           </Typography>
         </Box>
       </Box>
+
+      {/* Animation Keyframes */}
+      <style>
+        {`
+          @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-25px); }
+            100% { transform: translateY(0px); }
+          }
+        `}
+      </style>
     </Box>
   );
 };

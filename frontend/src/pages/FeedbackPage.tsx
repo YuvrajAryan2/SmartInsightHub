@@ -8,14 +8,21 @@ import {
   CircularProgress,
   Stack,
   TextField,
-  Typography
+  Typography,
+  MenuItem,
+  Rating
 } from "@mui/material";
 import { submitFeedback } from "../api";
 
 const FeedbackPage: React.FC = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
+  const [department, setDepartment] = useState("");
+  const [reviewPeriod, setReviewPeriod] = useState("");
+  const [rating, setRating] = useState<number | null>(3);
+  const [strengths, setStrengths] = useState("");
+  const [improvements, setImprovements] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,18 +32,35 @@ const FeedbackPage: React.FC = () => {
     setError(null);
     setSuccess(null);
 
-    if (!name || !email || !message) {
-      setError("Please fill out all fields.");
+    if (!name || !email || !strengths) {
+      setError("Please fill out required fields.");
       return;
     }
 
+    const fullMessage = `
+Department: ${department}
+Review Period: ${reviewPeriod}
+Overall Rating: ${rating}/5
+
+Strengths:
+${strengths}
+
+Areas for Improvement:
+${improvements}
+`;
+
     try {
       setLoading(true);
-      await submitFeedback({ name, email, message });
-      setSuccess("Feedback submitted and being analyzed by AI.");
+      await submitFeedback({ name, email, message: fullMessage });
+      setSuccess("Review submitted successfully.");
+
       setName("");
       setEmail("");
-      setMessage("");
+      setDepartment("");
+      setReviewPeriod("");
+      setRating(3);
+      setStrengths("");
+      setImprovements("");
     } catch (err: any) {
       setError(
         err?.response?.data?.message ||
@@ -48,7 +72,7 @@ const FeedbackPage: React.FC = () => {
   };
 
   return (
-    <Box maxWidth={600} width="100%">
+    <Box maxWidth={700} width="100%">
       <Typography
         variant="h4"
         gutterBottom
@@ -60,17 +84,7 @@ const FeedbackPage: React.FC = () => {
           WebkitTextFillColor: "transparent"
         }}
       >
-        Employee Feedback
-      </Typography>
-
-      <Typography
-        variant="body1"
-        color="text.secondary"
-        textAlign="center"
-        mb={3}
-      >
-        Share your thoughts. Our AI extracts sentiment, topics, and summaries
-        to help HR make better decisions.
+        Performance Review Submission
       </Typography>
 
       <Card
@@ -89,48 +103,108 @@ const FeedbackPage: React.FC = () => {
               {error && <Alert severity="error">{error}</Alert>}
 
               <TextField
-                label="Name"
+                label="Reviewer Name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 fullWidth
                 required
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "rgba(255,255,255,0.05)",
-                    borderRadius: 2
-                  }
-                }}
               />
 
               <TextField
-                label="Email"
+                label="Reviewer Email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 fullWidth
                 required
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "rgba(255,255,255,0.05)",
-                    borderRadius: 2
+              />
+
+              {/* Department Dropdown (Opaque Menu) */}
+              <TextField
+                select
+                label="Department"
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                fullWidth
+                SelectProps={{
+                  MenuProps: {
+                    PaperProps: {
+                      sx: {
+                        backgroundColor: "#1e1b4b", // solid dark
+                        color: "#fff"
+                      }
+                    }
                   }
                 }}
+              >
+                {["Engineering", "HR", "Marketing", "Sales", "Operations"].map(
+                  (option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  )
+                )}
+              </TextField>
+
+              {/* Review Period Dropdown (Selectable) */}
+              <TextField
+                select
+                label="Review Period"
+                value={reviewPeriod}
+                onChange={(e) => setReviewPeriod(e.target.value)}
+                fullWidth
+                SelectProps={{
+                  MenuProps: {
+                    PaperProps: {
+                      sx: {
+                        backgroundColor: "#1e1b4b",
+                        color: "#fff"
+                      }
+                    }
+                  }
+                }}
+              >
+                {[
+                  "Q1 2026",
+                  "Q2 2026",
+                  "Q3 2026",
+                  "Q4 2026",
+                  "Annual 2025",
+                  "Annual 2026"
+                ].map((option) => (
+                  <MenuItem key={option} value={option}>
+                    {option}
+                  </MenuItem>
+                ))}
+              </TextField>
+
+              <Box>
+                <Typography gutterBottom>
+                  Overall Performance Rating
+                </Typography>
+                <Rating
+                  value={rating}
+                  onChange={(event, newValue) => setRating(newValue)}
+                />
+              </Box>
+
+              <TextField
+                label="Key Strengths"
+                value={strengths}
+                onChange={(e) => setStrengths(e.target.value)}
+                multiline
+                minRows={3}
+                fullWidth
+                required
               />
 
               <TextField
-                label="Feedback"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                fullWidth
-                required
+                label="Areas for Improvement"
+                value={improvements}
+                onChange={(e) => setImprovements(e.target.value)}
                 multiline
-                minRows={4}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "rgba(255,255,255,0.05)",
-                    borderRadius: 2
-                  }
-                }}
+                minRows={3}
+                fullWidth
               />
 
               <Box display="flex" justifyContent="flex-end">
@@ -138,26 +212,21 @@ const FeedbackPage: React.FC = () => {
                   type="submit"
                   disabled={loading}
                   sx={{
-                    borderRadius: 3,
+                    borderRadius: 2,
                     px: 4,
                     py: 1.2,
-                    textTransform: "none",
                     fontWeight: 600,
-                    color: "#ffffff",  // 🔥 FORCE WHITE TEXT
-                    background:
-                      "linear-gradient(90deg, #6d28d9, #7c3aed)", // softer purple
-                    boxShadow: "none", // remove neon glow
-                    transition: "all 0.3s ease",
+                    color: "#fff",
+                    background: "#6d28d9",
                     "&:hover": {
-                      background:
-                        "linear-gradient(90deg, #5b21b6, #6d28d9)"
+                      background: "#5b21b6"
                     }
                   }}
                 >
                   {loading ? (
                     <CircularProgress size={20} sx={{ color: "#fff" }} />
                   ) : (
-                    "Share Feedback"
+                    "Submit Review"
                   )}
                 </Button>
               </Box>
