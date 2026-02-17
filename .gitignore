@@ -1,24 +1,32 @@
 # Node
 node_modules/
 dist/
-
-# Env files
-*.env
-*.env.*
-
-# Terraform state & cache
-infra/.terraform/
-infra/*.tfstate
-infra/*.tfstate.backup
-infra/crash.log
-infra/lambda_build/
+.env
+.env.local
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
+backend/package/
+
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/terraform.tfstate
+infra/terraform.tfstate.backup
+infra/terraform.tfvars
+infra/lambda_build/
+*.tfplan
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+lambda.zip

@@ -1,0 +1,25 @@
+# terraform.tfvars — Fill in your values before running terraform apply
+# Copy this file: cp terraform.tfvars.example terraform.tfvars
+
+aws_region           = "ca-central-1"
+project_name         = "cap-project"
+feedback_table_name  = "cap-project-feedback"
+
+# REQUIRED: Must be globally unique S3 bucket names
+export_bucket_name   = "cap-project-exports-1234"      # change 1234 to something unique
+frontend_bucket_name = "cap-project-frontend-1234"     # change 1234 to something unique
+
+# AI config
+bedrock_model_id     = "anthropic.claude-3-haiku-20240307-v1:0"
+ai_provider          = "bedrock"
+
+# API Gateway
+api_stage_name       = "prod"
+event_bus_name       = "default"
+
+# CI/CD
+github_repo          = "YuvrajAryan2/capDemo"
+github_branch        = "main"
+
+# Optional: Set your email to receive CloudWatch alarm notifications
+alert_email          = ""

@@ -1,0 +1,43 @@
+###############################################################################
+# buildspec-backend.yml
+# CodeBuild spec: install deps → zip → update Lambda function code
+###############################################################################
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Installing Python dependencies..."
+      - pip install -r backend/requirements.txt -t backend/package/ --quiet --upgrade
+      - cp backend/lambda_function.py backend/package/lambda_function.py
+
+  build:
+    commands:
+      - echo "Packaging Lambda..."
+      - cd backend/package && zip -r ../../lambda.zip . && cd ../..
+      - echo "Deploying to Lambda function $LAMBDA_FUNCTION_NAME..."
+      - |
+        aws lambda update-function-code \
+          --function-name "$LAMBDA_FUNCTION_NAME" \
+          --zip-file fileb://lambda.zip \
+          --region "$AWS_DEFAULT_REGION"
+      - echo "Waiting for Lambda update to complete..."
+      - |
+        aws lambda wait function-updated \
+          --function-name "$LAMBDA_FUNCTION_NAME" \
+          --region "$AWS_DEFAULT_REGION"
+
+  post_build:
+    commands:
+      - echo "Backend deployment complete."
+
+artifacts:
+  files:
+    - lambda.zip
+  name: backend_artifact
+
+cache:
+  paths:
+    - backend/package/**/*
