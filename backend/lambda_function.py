@@ -107,6 +107,19 @@ def handle_post_feedback(event: Dict[str, Any]) -> Dict[str, Any]:
     name    = (body.get("name")    or "").strip()[:200]
     email   = (body.get("email")   or "").strip()[:200]
     message = (body.get("message") or "").strip()[:MAX_MESSAGE_LEN]
+    
+    # ── Extract additional fields from frontend (if provided) ─────────────────
+    employee_name = (body.get("employeeName") or "").strip()[:200]
+    department    = (body.get("department")   or "").strip()[:100]
+    review_period = (body.get("reviewPeriod") or "").strip()[:50]
+    rating        = body.get("rating")
+    if rating is not None:
+        try:
+            rating = int(rating)
+            if rating < 1 or rating > 5:
+                rating = None
+        except (ValueError, TypeError):
+            rating = None
 
     # ── Validate ──────────────────────────────────────────────────────────────
     if not name or not email or not message:
@@ -122,7 +135,7 @@ def handle_post_feedback(event: Dict[str, Any]) -> Dict[str, Any]:
 
     item = {
         "feedbackId":  feedback_id,
-        "name":        name,
+        "name":        name,                  # Reviewer name
         "email":       masked_email,          # PII masked at rest
         "message":     message,
         "sentiment":   None,
@@ -132,6 +145,16 @@ def handle_post_feedback(event: Dict[str, Any]) -> Dict[str, Any]:
         "aiProcessed": False,
         "aiProvider":  AI_PROVIDER,
     }
+    
+    # Add optional fields if provided
+    if employee_name:
+        item["employeeName"] = employee_name
+    if department:
+        item["department"] = department
+    if review_period:
+        item["reviewPeriod"] = review_period
+    if rating is not None:
+        item["rating"] = rating
 
     # ── Save to DynamoDB ──────────────────────────────────────────────────────
     table.put_item(Item=item)
@@ -163,19 +186,36 @@ def handle_async_analysis(detail: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[ASYNC AI] Result: {json.dumps(ai_result)}")
 
         # ── Update DynamoDB with AI results ───────────────────────────────────
+        update_expr = (
+            "SET sentiment = :s, topics = :t, summary = :m, "
+            "aiProcessed = :p, aiProvider = :ap"
+        )
+        attr_values = {
+            ":s":  ai_result["sentiment"],
+            ":t":  ai_result["topics"],
+            ":m":  ai_result["summary"],
+            ":p":  True,
+            ":ap": AI_PROVIDER,
+        }
+        
+        # Add new enhanced fields if present
+        if "strengths" in ai_result:
+            update_expr += ", strengths = :str"
+            attr_values[":str"] = ai_result["strengths"]
+        if "improvements" in ai_result:
+            update_expr += ", improvements = :imp"
+            attr_values[":imp"] = ai_result["improvements"]
+        if "competency_areas" in ai_result:
+            update_expr += ", competency_areas = :comp"
+            attr_values[":comp"] = ai_result["competency_areas"]
+        if "priority_level" in ai_result:
+            update_expr += ", priority_level = :pri"
+            attr_values[":pri"] = ai_result["priority_level"]
+        
         table.update_item(
             Key={"feedbackId": feedback_id},
-            UpdateExpression=(
-                "SET sentiment = :s, topics = :t, summary = :m, "
-                "aiProcessed = :p, aiProvider = :ap"
-            ),
-            ExpressionAttributeValues={
-                ":s":  ai_result["sentiment"],
-                ":t":  ai_result["topics"],
-                ":m":  ai_result["summary"],
-                ":p":  True,
-                ":ap": AI_PROVIDER,
-            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=attr_values,
         )
 
         # ── Export to S3 ──────────────────────────────────────────────────────
@@ -225,6 +265,7 @@ def handle_get_insights() -> Dict[str, Any]:
     # ── Aggregate sentiment counts ────────────────────────────────────────────
     sentiment_counts = {"positive": 0, "negative": 0, "neutral": 0}
     summaries: List[Dict[str, Any]] = []
+    reviews: List[Dict[str, Any]] = []  # Employee reviews for frontend
     all_topics: List[str] = []
     monthly_sentiment: Dict[str, Dict[str, int]] = {}
 
@@ -250,7 +291,7 @@ def handle_get_insights() -> Dict[str, Any]:
         if sentiment in monthly_sentiment[month_key]:
             monthly_sentiment[month_key][sentiment] += 1
 
-        # Summaries (only AI-processed ones)
+        # Summaries (only AI-processed ones) - for backward compatibility
         if item.get("summary") and item.get("aiProcessed"):
             summaries.append({
                 "summary":   item["summary"],
@@ -258,6 +299,19 @@ def handle_get_insights() -> Dict[str, Any]:
                 "topics":    item.get("topics", []),
                 "timestamp": ts[:10] if ts else "",
             })
+            
+            # Employee reviews with full data
+            review = {
+                "employeeName": item.get("employeeName", "Unknown Employee"),
+                "department": item.get("department", ""),
+                "reviewPeriod": item.get("reviewPeriod", ""),
+                "rating": item.get("rating", 0),
+                "sentiment": sentiment,
+                "summary": item.get("summary", ""),
+                "topics": item.get("topics", []),
+                "timestamp": ts[:10] if ts else "",
+            }
+            reviews.append(review)
 
         # Topics
         if isinstance(item.get("topics"), list):
@@ -302,7 +356,9 @@ def handle_get_insights() -> Dict[str, Any]:
         "sentimentCounts":  sentiment_counts,
         "topTopics":        top_topics,
         "sentimentTrend":   sentiment_trend,
-        "recentSummaries":  summaries[-20:],    # last 20 only
+        "recentSummaries":  summaries[-20:],    # last 20 only (for backward compatibility)
+        "summaries":        [s["summary"] for s in summaries[-20:]],  # Simple string array (for backward compatibility)
+        "reviews":          reviews[-50:],     # last 50 employee reviews with full data
         "topics":           all_topics,         # raw flat list for word cloud
     })
 
@@ -323,19 +379,34 @@ def call_ai_analysis(message: str) -> Dict[str, Any]:
 
 def call_bedrock_analysis(message: str) -> Dict[str, Any]:
     prompt = (
-        f"Analyze this employee performance feedback and respond ONLY with valid JSON. "
-        f"No preamble, no markdown, no explanation.\n\n"
-        f"Required JSON format:\n"
-        f'{{"sentiment": "positive|negative|neutral", '
-        f'"topics": ["topic1", "topic2"], '
-        f'"summary": "one sentence summary"}}\n\n'
-        f'Feedback: """{message}"""'
+        f"You are an expert HR analyst specializing in performance feedback analysis. "
+        f"Analyze the following employee performance feedback with depth and precision.\n\n"
+        f"Context: This feedback is part of a performance review system. Your analysis will help "
+        f"HR identify patterns, skill gaps, and development opportunities.\n\n"
+        f"Feedback Text:\n\"\"\"{message}\"\"\"\n\n"
+        f"Provide a comprehensive analysis in JSON format with these exact fields:\n"
+        f"1. sentiment: Classify as 'positive', 'negative', or 'neutral' based on overall tone\n"
+        f"2. topics: Extract 3-8 key topics/themes (e.g., 'communication skills', 'technical expertise', "
+        f"'leadership', 'time management', 'collaboration', 'problem-solving'). Use specific, actionable terms.\n"
+        f"3. summary: Write a 2-3 sentence professional summary that:\n"
+        f"   - Captures the essence of the feedback\n"
+        f"   - Highlights key strengths or concerns\n"
+        f"   - Is suitable for HR review\n"
+        f"4. strengths: List 2-4 specific strengths mentioned (if any), or empty array if none\n"
+        f"5. improvements: List 2-4 specific areas for improvement mentioned (if any), or empty array if none\n"
+        f"6. competency_areas: Identify 1-3 competency categories from: Technical Skills, "
+        f"Communication, Leadership, Collaboration, Problem-Solving, Time Management, Innovation, "
+        f"Customer Focus, Adaptability, Quality Focus. Return as array.\n"
+        f"7. priority_level: 'high', 'medium', or 'low' based on urgency/importance of the feedback\n\n"
+        f"Respond ONLY with valid JSON, no markdown, no explanation:\n"
+        f'{{"sentiment": "...", "topics": [...], "summary": "...", "strengths": [...], '
+        f'"improvements": [...], "competency_areas": [...], "priority_level": "..."}}'
     )
 
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens":        300,
-        "temperature":       0,
+        "max_tokens":        500,  # Increased for better summaries
+        "temperature":       0.2,  # Slight creativity for better summaries
         "messages": [
             {"role": "user", "content": [{"type": "text", "text": prompt}]}
         ],
@@ -389,7 +460,15 @@ def call_comprehend_analysis(message: str) -> Dict[str, Any]:
         if topics else f"Feedback classified as {sentiment}."
     )
 
-    return {"sentiment": sentiment, "topics": topics, "summary": summary}
+    return {
+        "sentiment": sentiment,
+        "topics": topics,
+        "summary": summary,
+        "strengths": [],
+        "improvements": [],
+        "competency_areas": [],
+        "priority_level": "medium",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -438,11 +517,7 @@ def _safe_parse_ai_response(raw: str) -> Dict[str, Any]:
     # Try direct parse first
     try:
         parsed = json.loads(cleaned)
-        return {
-            "sentiment": str(parsed.get("sentiment", "neutral")).lower(),
-            "topics":    [str(t) for t in parsed.get("topics", [])],
-            "summary":   str(parsed.get("summary", ""))[:500],
-        }
+        return _normalize_ai_result(parsed)
     except json.JSONDecodeError:
         pass
 
@@ -451,17 +526,64 @@ def _safe_parse_ai_response(raw: str) -> Dict[str, Any]:
     if match:
         try:
             parsed = json.loads(match.group())
-            return {
-                "sentiment": str(parsed.get("sentiment", "neutral")).lower(),
-                "topics":    [str(t) for t in parsed.get("topics", [])],
-                "summary":   str(parsed.get("summary", ""))[:500],
-            }
+            return _normalize_ai_result(parsed)
         except json.JSONDecodeError:
             pass
 
     # Final fallback — return safe defaults
     print(f"[AI PARSE FAILED] Raw response: {raw[:200]}")
-    return {"sentiment": "neutral", "topics": [], "summary": raw[:200]}
+    return {
+        "sentiment": "neutral",
+        "topics": [],
+        "summary": raw[:200],
+        "strengths": [],
+        "improvements": [],
+        "competency_areas": [],
+        "priority_level": "medium",
+    }
+
+
+def _normalize_ai_result(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize AI response to ensure all fields are present and valid."""
+    sentiment = str(parsed.get("sentiment", "neutral")).lower()
+    if sentiment not in {"positive", "negative", "neutral"}:
+        sentiment = "neutral"
+    
+    topics = parsed.get("topics", [])
+    if not isinstance(topics, list):
+        topics = [str(topics)] if topics else []
+    topics = [str(t).strip() for t in topics if t][:10]  # Max 10 topics
+    
+    summary = str(parsed.get("summary", "")).strip()[:500]
+    
+    strengths = parsed.get("strengths", [])
+    if not isinstance(strengths, list):
+        strengths = [str(strengths)] if strengths else []
+    strengths = [str(s).strip() for s in strengths if s][:5]
+    
+    improvements = parsed.get("improvements", [])
+    if not isinstance(improvements, list):
+        improvements = [str(improvements)] if improvements else []
+    improvements = [str(i).strip() for i in improvements if i][:5]
+    
+    competency_areas = parsed.get("competency_areas", [])
+    if not isinstance(competency_areas, list):
+        competency_areas = [str(competency_areas)] if competency_areas else []
+    competency_areas = [str(c).strip() for c in competency_areas if c][:5]
+    
+    priority_level = str(parsed.get("priority_level", "medium")).lower()
+    if priority_level not in {"high", "medium", "low"}:
+        priority_level = "medium"
+    
+    return {
+        "sentiment": sentiment,
+        "topics": topics,
+        "summary": summary,
+        "strengths": strengths,
+        "improvements": improvements,
+        "competency_areas": competency_areas,
+        "priority_level": priority_level,
+    }
 
 
 def _valid_email(email: str) -> bool:

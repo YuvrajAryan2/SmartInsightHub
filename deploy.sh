@@ -147,6 +147,8 @@ FRONTEND_BUCKET=$(terraform output -raw frontend_bucket_name)
 CLOUDFRONT_ID=$(terraform output -raw cloudfront_distribution_id)
 CLOUDFRONT_URL=$(terraform output -raw frontend_cloudfront_url)
 LAMBDA_NAME=$(terraform output -raw lambda_function_name)
+COGNITO_POOL_ID=$(terraform output -raw cognito_user_pool_id)
+COGNITO_CLIENT_ID=$(terraform output -raw cognito_user_pool_client_id)
 
 log "Infrastructure deployed!"
 log "API URL:      $API_BASE_URL"
@@ -173,7 +175,11 @@ log "Node dependencies installed"
 section "Step 7/8  Frontend — Build"
 
 info "Writing .env with API URL..."
-echo "VITE_API_BASE_URL=$API_BASE_URL" > .env
+cat > .env <<EOF
+VITE_API_BASE_URL=$API_BASE_URL
+VITE_COGNITO_USER_POOL_ID=$COGNITO_POOL_ID
+VITE_COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID
+EOF
 
 info "Building React app..."
 npm run build

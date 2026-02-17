@@ -41,6 +41,72 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 ###############################################################################
+# COGNITO — AUTH (No Amplify)
+###############################################################################
+
+resource "aws_cognito_user_pool" "users" {
+  name = var.cognito_user_pool_name
+
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+
+  password_policy {
+    minimum_length    = 8
+    require_lowercase = true
+    require_uppercase = true
+    require_numbers   = true
+    require_symbols   = false
+  }
+
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
+  }
+
+  schema {
+    name                = "email"
+    attribute_data_type = "String"
+    required            = true
+    mutable             = true
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_cognito_user_pool_client" "spa" {
+  name         = "${var.project_name}-spa"
+  user_pool_id = aws_cognito_user_pool.users.id
+
+  generate_secret     = false
+  explicit_auth_flows = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_PASSWORD_AUTH"]
+
+  prevent_user_existence_errors = "ENABLED"
+  supported_identity_providers  = ["COGNITO"]
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 30
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+
+  allowed_oauth_flows_user_pool_client = false
+
+  read_attributes  = ["email"]
+  write_attributes = ["email"]
+}
+
+resource "aws_cognito_user_group" "hr" {
+  name         = var.cognito_hr_group_name
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "HR users who can access the Insights dashboard"
+}
+
+###############################################################################
 # IAM — LAMBDA EXECUTION ROLE
 ###############################################################################
 
@@ -434,6 +500,16 @@ resource "aws_api_gateway_rest_api" "api" {
   tags = local.common_tags
 }
 
+# Cognito authorizer for JWT validation
+resource "aws_api_gateway_authorizer" "cognito" {
+  name          = "${var.project_name}-cognito-authorizer"
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  type          = "COGNITO_USER_POOLS"
+  provider_arns = [aws_cognito_user_pool.users.arn]
+
+  identity_source = "method.request.header.Authorization"
+}
+
 # /feedback resource
 resource "aws_api_gateway_resource" "feedback_resource" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -454,7 +530,8 @@ resource "aws_api_gateway_method" "feedback_post" {
   rest_api_id   = aws_api_gateway_rest_api.api.id
   resource_id   = aws_api_gateway_resource.feedback_resource.id
   http_method   = "POST"
-  authorization = "NONE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
 }
 
 resource "aws_api_gateway_method" "feedback_options" {
@@ -468,7 +545,8 @@ resource "aws_api_gateway_method" "insights_get" {
   rest_api_id   = aws_api_gateway_rest_api.api.id
   resource_id   = aws_api_gateway_resource.insights_resource.id
   http_method   = "GET"
-  authorization = "NONE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
 }
 
 resource "aws_api_gateway_method" "insights_options" {
@@ -1006,4 +1084,14 @@ output "dynamodb_table_name" {
 
 output "export_bucket_name" {
   value = aws_s3_bucket.export_bucket.bucket
+}
+
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID (use as VITE_COGNITO_USER_POOL_ID)"
+  value       = aws_cognito_user_pool.users.id
+}
+
+output "cognito_user_pool_client_id" {
+  description = "Cognito App Client ID for SPA (use as VITE_COGNITO_CLIENT_ID)"
+  value       = aws_cognito_user_pool_client.spa.id
 }

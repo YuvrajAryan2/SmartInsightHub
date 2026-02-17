@@ -87,3 +87,20 @@ variable "github_branch" {
   default     = "main"
   description = "GitHub branch to trigger CI/CD pipeline on"
 }
+
+###############################################################################
+# Cognito (Auth) — No Amplify
+###############################################################################
+
+variable "cognito_user_pool_name" {
+  type        = string
+  default     = "cap-project-users"
+  description = "Cognito User Pool name"
+}
+
+variable "cognito_hr_group_name" {
+  type        = string
+  default     = "hr"
+  description = "Cognito group name for HR users"
+}
+
