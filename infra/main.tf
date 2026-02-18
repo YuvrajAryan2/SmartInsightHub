@@ -790,3 +790,219 @@ output "cognito_user_pool_client_id" {
   description = "Cognito App Client ID for SPA (use as VITE_COGNITO_CLIENT_ID)"
   value       = aws_cognito_user_pool_client.spa.id
 }
+###############################################################################
+# CODEPIPELINE — CI/CD (S3 Source, no GitHub connection needed)
+###############################################################################
+
+resource "aws_s3_bucket" "pipeline_artifacts" {
+  bucket = "${var.project_name}-pipeline-${data.aws_caller_identity.current.account_id}"
+  tags   = local.common_tags
+}
+
+resource "aws_s3_bucket_versioning" "pipeline_artifacts" {
+  bucket = aws_s3_bucket.pipeline_artifacts.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "pipeline_artifacts" {
+  bucket                  = aws_s3_bucket.pipeline_artifacts.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_iam_role" "codepipeline_role" {
+  name = "${var.project_name}-codepipeline-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "codepipeline.amazonaws.com" }
+    }]
+  })
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "codepipeline_policy" {
+  role = aws_iam_role.codepipeline_role.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:*"]
+        Resource = [
+          aws_s3_bucket.pipeline_artifacts.arn,
+          "${aws_s3_bucket.pipeline_artifacts.arn}/*",
+          aws_s3_bucket.frontend_bucket.arn,
+          "${aws_s3_bucket.frontend_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cloudfront:CreateInvalidation"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "codebuild_role" {
+  name = "${var.project_name}-codebuild-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "codebuild.amazonaws.com" }
+    }]
+  })
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "codebuild_policy" {
+  role = aws_iam_role.codebuild_role.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["logs:*"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:*"]
+        Resource = [
+          aws_s3_bucket.pipeline_artifacts.arn,
+          "${aws_s3_bucket.pipeline_artifacts.arn}/*",
+          aws_s3_bucket.frontend_bucket.arn,
+          "${aws_s3_bucket.frontend_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "lambda:UpdateFunctionCode",
+          "lambda:GetFunctionConfiguration"
+        ]
+        Resource = aws_lambda_function.feedback_api.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cloudfront:CreateInvalidation"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_codebuild_project" "frontend" {
+  name         = "${var.project_name}-frontend-build"
+  service_role = aws_iam_role.codebuild_role.arn
+  artifacts { type = "CODEPIPELINE" }
+  environment {
+    compute_type = "BUILD_GENERAL1_SMALL"
+    image        = "aws/codebuild/standard:7.0"
+    type         = "LINUX_CONTAINER"
+    environment_variable {
+      name  = "FRONTEND_BUCKET"
+      value = aws_s3_bucket.frontend_bucket.bucket
+    }
+    environment_variable {
+      name  = "CLOUDFRONT_DISTRIBUTION_ID"
+      value = aws_cloudfront_distribution.frontend.id
+    }
+    environment_variable {
+      name  = "VITE_API_BASE_URL"
+      value = aws_api_gateway_stage.stage.invoke_url
+    }
+  }
+  source {
+    type      = "CODEPIPELINE"
+    buildspec = "buildspec-frontend.yml"
+  }
+  tags = local.common_tags
+}
+
+resource "aws_codebuild_project" "backend" {
+  name         = "${var.project_name}-backend-build"
+  service_role = aws_iam_role.codebuild_role.arn
+  artifacts { type = "CODEPIPELINE" }
+  environment {
+    compute_type = "BUILD_GENERAL1_SMALL"
+    image        = "aws/codebuild/standard:7.0"
+    type         = "LINUX_CONTAINER"
+    environment_variable {
+      name  = "LAMBDA_FUNCTION_NAME"
+      value = aws_lambda_function.feedback_api.function_name
+    }
+  }
+  source {
+    type      = "CODEPIPELINE"
+    buildspec = "buildspec-backend.yml"
+  }
+  tags = local.common_tags
+}
+
+resource "aws_codepipeline" "main" {
+  name     = "${var.project_name}-pipeline"
+  role_arn = aws_iam_role.codepipeline_role.arn
+
+  artifact_store {
+    type     = "S3"
+    location = aws_s3_bucket.pipeline_artifacts.bucket
+  }
+
+  stage {
+    name = "Source"
+    action {
+      name             = "S3_Source"
+      category         = "Source"
+      owner            = "AWS"
+      provider         = "S3"
+      version          = "1"
+      output_artifacts = ["source_output"]
+      configuration = {
+        S3Bucket             = aws_s3_bucket.pipeline_artifacts.bucket
+        S3ObjectKey          = "source.zip"
+        PollForSourceChanges = "true"
+      }
+    }
+  }
+
+  stage {
+    name = "Build"
+    action {
+      name             = "Build_Frontend"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      version          = "1"
+      input_artifacts  = ["source_output"]
+      output_artifacts = ["frontend_output"]
+      configuration    = { ProjectName = aws_codebuild_project.frontend.name }
+    }
+    action {
+      name             = "Build_Backend"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      version          = "1"
+      input_artifacts  = ["source_output"]
+      output_artifacts = ["backend_output"]
+      configuration    = { ProjectName = aws_codebuild_project.backend.name }
+    }
+  }
+
+  tags = local.common_tags
+}

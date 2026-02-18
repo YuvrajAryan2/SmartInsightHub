@@ -1,6 +1,6 @@
 ###############################################################################
 # buildspec-frontend.yml
-# CodeBuild spec: install → build React → sync to S3 → invalidate CloudFront
+# CodeBuild spec: install → create .env → build React → sync to S3 → invalidate CF
 ###############################################################################
 version: 0.2
 
@@ -10,12 +10,17 @@ phases:
       nodejs: 20
     commands:
       - echo "Installing Node dependencies..."
-      - cd frontend && npm ci
+      - cd frontend
+      - npm ci
 
   pre_build:
     commands:
-      - echo "Setting API base URL..."
+      - echo "Creating production .env file..."
       - echo "VITE_API_BASE_URL=$VITE_API_BASE_URL" > .env
+      - echo "VITE_COGNITO_USER_POOL_ID=$VITE_COGNITO_USER_POOL_ID" >> .env
+      - echo "VITE_COGNITO_CLIENT_ID=$VITE_COGNITO_CLIENT_ID" >> .env
+      - echo ".env file created:"
+      - cat .env
 
   build:
     commands:
@@ -25,20 +30,23 @@ phases:
 
   post_build:
     commands:
-      - echo "Syncing to S3 bucket $FRONTEND_BUCKET..."
+      - echo "Syncing build to S3 bucket $FRONTEND_BUCKET..."
       - |
         aws s3 sync frontend/dist/ "s3://$FRONTEND_BUCKET/" \
           --delete \
           --cache-control "max-age=31536000,public" \
           --exclude "index.html"
+
       - |
         aws s3 cp frontend/dist/index.html "s3://$FRONTEND_BUCKET/index.html" \
           --cache-control "no-cache,no-store,must-revalidate"
+
       - echo "Invalidating CloudFront cache..."
       - |
         aws cloudfront create-invalidation \
           --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
           --paths "/*"
+
       - echo "Frontend deployment complete!"
 
 artifacts:
