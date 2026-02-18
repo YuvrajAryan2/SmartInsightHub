@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getAccessToken } from "./auth";
+import { getAccessToken, getStoredSession } from "./auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
@@ -9,10 +9,11 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = getAccessToken();
+  const session = getStoredSession();
+  const token = session?.idToken;
   if (token) {
     config.headers = config.headers ?? {};
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers.Authorization = token;
   }
   return config;
 });

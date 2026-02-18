@@ -2,8 +2,7 @@
 # Smart Talent Insight Hub — Full Infrastructure
 # Region: ca-central-1 (Canada Central)
 # Covers: Lambda, API Gateway, DynamoDB, S3, EventBridge,
-#         CloudWatch Alarms, X-Ray, CodePipeline, CodeBuild,
-#         IAM, S3 Frontend + CloudFront
+#         CloudWatch Alarms, X-Ray, IAM, S3 Frontend + CloudFront
 ###############################################################################
 
 terraform {
@@ -19,14 +18,6 @@ terraform {
       version = ">= 2.4"
     }
   }
-
-  # Uncomment for team use — stores state remotely
-  # backend "s3" {
-  #   bucket         = "my-capstone-tfstate"
-  #   key            = "capstone/terraform.tfstate"
-  #   region         = "ca-central-1"
-  #   dynamodb_table = "terraform-lock"
-  # }
 }
 
 provider "aws" {
@@ -133,14 +124,12 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# X-Ray managed policy
 resource "aws_iam_role_policy_attachment" "lambda_xray" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
 data "aws_iam_policy_document" "lambda_policy" {
-  # DynamoDB
   statement {
     effect  = "Allow"
     actions = [
@@ -153,14 +142,12 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = [aws_dynamodb_table.feedback_table.arn]
   }
 
-  # Bedrock
   statement {
     effect    = "Allow"
     actions   = ["bedrock:InvokeModel"]
     resources = ["*"]
   }
 
-  # Comprehend (fallback AI)
   statement {
     effect  = "Allow"
     actions = [
@@ -170,21 +157,18 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = ["*"]
   }
 
-  # S3 export bucket
   statement {
     effect    = "Allow"
     actions   = ["s3:PutObject", "s3:GetObject"]
     resources = ["${aws_s3_bucket.export_bucket.arn}/*"]
   }
 
-  # EventBridge — Lambda fires events for async processing
   statement {
     effect    = "Allow"
     actions   = ["events:PutEvents"]
     resources = ["arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:event-bus/${var.event_bus_name}"]
   }
 
-  # CloudWatch Logs explicit (belt-and-suspenders)
   statement {
     effect  = "Allow"
     actions = [
@@ -220,7 +204,6 @@ resource "aws_dynamodb_table" "feedback_table" {
     type = "S"
   }
 
-  # Enable DynamoDB Streams for EventBridge Pipes (optional future use)
   stream_enabled   = true
   stream_view_type = "NEW_IMAGE"
 
@@ -285,10 +268,9 @@ resource "aws_s3_bucket_public_access_block" "frontend_bucket" {
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend_bucket.id
   index_document { suffix = "index.html" }
-  error_document { key = "index.html" }   # React Router support
+  error_document { key = "index.html" }
 }
 
-# CloudFront Origin Access Control
 resource "aws_cloudfront_origin_access_control" "frontend_oac" {
   name                              = "${var.project_name}-oac"
   origin_access_control_origin_type = "s3"
@@ -300,7 +282,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
   comment             = "${var.project_name} frontend"
-  price_class         = "PriceClass_100"   # NA + Europe only (cheapest)
+  price_class         = "PriceClass_100"
 
   origin {
     domain_name              = aws_s3_bucket.frontend_bucket.bucket_regional_domain_name
@@ -325,7 +307,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     max_ttl     = 86400
   }
 
-  # SPA routing — return index.html on 403/404
   custom_error_response {
     error_code            = 403
     response_code         = 200
@@ -350,7 +331,6 @@ resource "aws_cloudfront_distribution" "frontend" {
   tags = local.common_tags
 }
 
-# Allow CloudFront to read from frontend S3 bucket
 data "aws_iam_policy_document" "frontend_bucket_policy" {
   statement {
     effect    = "Allow"
@@ -377,7 +357,6 @@ resource "aws_s3_bucket_policy" "frontend_bucket" {
 # LAMBDA — PACKAGING
 ###############################################################################
 
-# Install Python dependencies into backend/ before zipping
 resource "null_resource" "pip_install" {
   triggers = {
     requirements = filemd5("${path.module}/../backend/requirements.txt")
@@ -386,14 +365,21 @@ resource "null_resource" "pip_install" {
 
   provisioner "local-exec" {
     command = <<EOT
-      pip install \
+      mkdir -p ${path.module}/../backend/package && \
+      pip3 install \
         -r ${path.module}/../backend/requirements.txt \
         -t ${path.module}/../backend/package \
         --upgrade \
-        --quiet
+        --quiet && \
       cp ${path.module}/../backend/lambda_function.py \
          ${path.module}/../backend/package/lambda_function.py
     EOT
+  }
+}
+
+resource "null_resource" "mkdir_lambda_build" {
+  provisioner "local-exec" {
+    command = "mkdir -p ${path.module}/lambda_build"
   }
 }
 
@@ -402,7 +388,7 @@ data "archive_file" "lambda_zip" {
   source_dir  = "${path.module}/../backend/package"
   output_path = "${path.module}/lambda_build/lambda.zip"
 
-  depends_on = [null_resource.pip_install]
+  depends_on = [null_resource.pip_install, null_resource.mkdir_lambda_build]
 }
 
 ###############################################################################
@@ -427,15 +413,14 @@ resource "aws_lambda_function" "feedback_api" {
   timeout     = 30
   memory_size = 256
 
-  # X-Ray tracing
   tracing_config {
     mode = "Active"
   }
 
   environment {
     variables = {
-      FEEDBACK_TABLE_NAME = aws_dynamodb_table.feedback_table.name   # cap-project-feedback
-      EXPORT_BUCKET_NAME  = aws_s3_bucket.export_bucket.bucket       # cap-project-exports-xxxx
+      FEEDBACK_TABLE_NAME = aws_dynamodb_table.feedback_table.name
+      EXPORT_BUCKET_NAME  = aws_s3_bucket.export_bucket.bucket
       BEDROCK_MODEL_ID    = var.bedrock_model_id
       AWS_REGION_OVERRIDE = var.aws_region
       AI_PROVIDER         = var.ai_provider
@@ -456,7 +441,6 @@ resource "aws_lambda_function" "feedback_api" {
 # EVENTBRIDGE — ASYNC AI PROCESSING
 ###############################################################################
 
-# Rule: listen for talent.feedback events on default bus
 resource "aws_cloudwatch_event_rule" "feedback_submitted" {
   name           = "${var.project_name}-feedback-submitted"
   description    = "Triggers AI analysis Lambda when feedback is submitted"
@@ -500,7 +484,6 @@ resource "aws_api_gateway_rest_api" "api" {
   tags = local.common_tags
 }
 
-# Cognito authorizer for JWT validation
 resource "aws_api_gateway_authorizer" "cognito" {
   name          = "${var.project_name}-cognito-authorizer"
   rest_api_id   = aws_api_gateway_rest_api.api.id
@@ -510,21 +493,17 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
-# /feedback resource
 resource "aws_api_gateway_resource" "feedback_resource" {
   rest_api_id = aws_api_gateway_rest_api.api.id
   parent_id   = aws_api_gateway_rest_api.api.root_resource_id
   path_part   = "feedback"
 }
 
-# /insights resource
 resource "aws_api_gateway_resource" "insights_resource" {
   rest_api_id = aws_api_gateway_rest_api.api.id
   parent_id   = aws_api_gateway_rest_api.api.root_resource_id
   path_part   = "insights"
 }
-
-# ── Methods ──────────────────────────────────────────────────────────────────
 
 resource "aws_api_gateway_method" "feedback_post" {
   rest_api_id   = aws_api_gateway_rest_api.api.id
@@ -555,8 +534,6 @@ resource "aws_api_gateway_method" "insights_options" {
   http_method   = "OPTIONS"
   authorization = "NONE"
 }
-
-# ── Lambda proxy integrations ─────────────────────────────────────────────────
 
 resource "aws_api_gateway_integration" "feedback_post" {
   rest_api_id             = aws_api_gateway_rest_api.api.id
@@ -594,8 +571,6 @@ resource "aws_api_gateway_integration" "insights_options" {
   uri                     = aws_lambda_function.feedback_api.invoke_arn
 }
 
-# ── Lambda invoke permission for API Gateway ──────────────────────────────────
-
 resource "aws_lambda_permission" "apigw_lambda" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
@@ -603,8 +578,6 @@ resource "aws_lambda_permission" "apigw_lambda" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*"
 }
-
-# ── Deployment & stage ────────────────────────────────────────────────────────
 
 resource "aws_api_gateway_deployment" "deployment" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -630,26 +603,38 @@ resource "aws_api_gateway_deployment" "deployment" {
   ]
 }
 
+resource "aws_cloudwatch_log_group" "api_gateway_logs" {
+  name              = "/aws/apigateway/${var.project_name}"
+  retention_in_days = 30
+  tags              = local.common_tags
+}
+
 resource "aws_api_gateway_stage" "stage" {
   rest_api_id   = aws_api_gateway_rest_api.api.id
   deployment_id = aws_api_gateway_deployment.deployment.id
   stage_name    = var.api_stage_name
 
-  # Enable X-Ray tracing on API Gateway
   xray_tracing_enabled = true
 
-  # CloudWatch access logging
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway_logs.arn
+
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      ip               = "$context.identity.sourceIp"
+      caller           = "$context.identity.caller"
+      user             = "$context.identity.user"
+      requestTime      = "$context.requestTime"
+      httpMethod       = "$context.httpMethod"
+      resourcePath     = "$context.resourcePath"
+      status           = "$context.status"
+      protocol         = "$context.protocol"
+      responseLength   = "$context.responseLength"
+      integrationError = "$context.integrationErrorMessage"
+    })
   }
 
   tags = local.common_tags
-}
-
-resource "aws_cloudwatch_log_group" "api_gateway_logs" {
-  name              = "/aws/apigateway/${var.project_name}"
-  retention_in_days = 30
-  tags              = local.common_tags
 }
 
 resource "aws_api_gateway_method_settings" "all" {
@@ -719,7 +704,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   namespace           = "AWS/Lambda"
   period              = 300
   extended_statistic  = "p99"
-  threshold           = 25000    # 25s — timeout is 30s
+  threshold           = 25000
   treat_missing_data  = "notBreaching"
 
   dimensions = {
@@ -739,296 +724,11 @@ resource "aws_sns_topic" "alerts" {
   tags = local.common_tags
 }
 
-# Optional: add email subscription
 resource "aws_sns_topic_subscription" "email_alert" {
   count     = var.alert_email != "" ? 1 : 0
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
   endpoint  = var.alert_email
-}
-
-###############################################################################
-# CI/CD — CODEPIPELINE + CODEBUILD
-###############################################################################
-
-# S3 bucket for pipeline artifacts
-resource "aws_s3_bucket" "pipeline_artifacts" {
-  bucket = "${var.project_name}-pipeline-artifacts-${data.aws_caller_identity.current.account_id}"
-  tags   = local.common_tags
-}
-
-resource "aws_s3_bucket_public_access_block" "pipeline_artifacts" {
-  bucket                  = aws_s3_bucket.pipeline_artifacts.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# IAM role for CodePipeline
-data "aws_iam_policy_document" "codepipeline_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["codepipeline.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "codepipeline_role" {
-  name               = "${var.project_name}-codepipeline-role"
-  assume_role_policy = data.aws_iam_policy_document.codepipeline_assume.json
-  tags               = local.common_tags
-}
-
-data "aws_iam_policy_document" "codepipeline_policy" {
-  statement {
-    effect  = "Allow"
-    actions = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:GetBucketVersioning"]
-    resources = [
-      aws_s3_bucket.pipeline_artifacts.arn,
-      "${aws_s3_bucket.pipeline_artifacts.arn}/*",
-    ]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["codebuild:BatchGetBuilds", "codebuild:StartBuild"]
-    resources = [aws_codebuild_project.backend_build.arn, aws_codebuild_project.frontend_build.arn]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["codestar-connections:UseConnection"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_role_policy" "codepipeline_policy" {
-  name   = "${var.project_name}-codepipeline-policy"
-  role   = aws_iam_role.codepipeline_role.id
-  policy = data.aws_iam_policy_document.codepipeline_policy.json
-}
-
-# IAM role for CodeBuild
-data "aws_iam_policy_document" "codebuild_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["codebuild.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "codebuild_role" {
-  name               = "${var.project_name}-codebuild-role"
-  assume_role_policy = data.aws_iam_policy_document.codebuild_assume.json
-  tags               = local.common_tags
-}
-
-data "aws_iam_policy_document" "codebuild_policy" {
-  statement {
-    effect  = "Allow"
-    actions = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:GetObjectVersion", "s3:GetBucketVersioning"]
-    resources = [
-      aws_s3_bucket.pipeline_artifacts.arn,
-      "${aws_s3_bucket.pipeline_artifacts.arn}/*",
-    ]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-    resources = [
-      aws_s3_bucket.frontend_bucket.arn,
-      "${aws_s3_bucket.frontend_bucket.arn}/*",
-    ]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration"]
-    resources = [aws_lambda_function.feedback_api.arn]
-  }
-  statement {
-    effect    = "Allow"
-    actions   = ["cloudfront:CreateInvalidation"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_role_policy" "codebuild_policy" {
-  name   = "${var.project_name}-codebuild-policy"
-  role   = aws_iam_role.codebuild_role.id
-  policy = data.aws_iam_policy_document.codebuild_policy.json
-}
-
-# CodeBuild — Backend
-resource "aws_codebuild_project" "backend_build" {
-  name          = "${var.project_name}-backend-build"
-  description   = "Build and deploy Lambda backend"
-  service_role  = aws_iam_role.codebuild_role.arn
-  build_timeout = 10
-
-  artifacts {
-    type = "CODEPIPELINE"
-  }
-
-  environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/standard:7.0"
-    type                        = "LINUX_CONTAINER"
-    image_pull_credentials_type = "CODEBUILD"
-
-    environment_variable {
-      name  = "LAMBDA_FUNCTION_NAME"
-      value = aws_lambda_function.feedback_api.function_name
-    }
-    environment_variable {
-      name  = "AWS_DEFAULT_REGION"
-      value = var.aws_region
-    }
-  }
-
-  source {
-    type      = "CODEPIPELINE"
-    buildspec = "buildspec-backend.yml"
-  }
-
-  logs_config {
-    cloudwatch_logs {
-      group_name  = "/aws/codebuild/${var.project_name}-backend"
-      stream_name = "build"
-    }
-  }
-
-  tags = local.common_tags
-}
-
-# CodeBuild — Frontend
-resource "aws_codebuild_project" "frontend_build" {
-  name          = "${var.project_name}-frontend-build"
-  description   = "Build React frontend and deploy to S3 + invalidate CloudFront"
-  service_role  = aws_iam_role.codebuild_role.arn
-  build_timeout = 10
-
-  artifacts {
-    type = "CODEPIPELINE"
-  }
-
-  environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/standard:7.0"
-    type                        = "LINUX_CONTAINER"
-    image_pull_credentials_type = "CODEBUILD"
-
-    environment_variable {
-      name  = "FRONTEND_BUCKET"
-      value = aws_s3_bucket.frontend_bucket.bucket
-    }
-    environment_variable {
-      name  = "CLOUDFRONT_DISTRIBUTION_ID"
-      value = aws_cloudfront_distribution.frontend.id
-    }
-    environment_variable {
-      name  = "VITE_API_BASE_URL"
-      value = aws_api_gateway_stage.stage.invoke_url
-    }
-  }
-
-  source {
-    type      = "CODEPIPELINE"
-    buildspec = "buildspec-frontend.yml"
-  }
-
-  logs_config {
-    cloudwatch_logs {
-      group_name  = "/aws/codebuild/${var.project_name}-frontend"
-      stream_name = "build"
-    }
-  }
-
-  tags = local.common_tags
-}
-
-# GitHub connection (must be manually authorised in AWS Console after apply)
-resource "aws_codestarconnections_connection" "github" {
-  name          = "${var.project_name}-github"
-  provider_type = "GitHub"
-  tags          = local.common_tags
-}
-
-# CodePipeline
-resource "aws_codepipeline" "pipeline" {
-  name     = "${var.project_name}-pipeline"
-  role_arn = aws_iam_role.codepipeline_role.arn
-
-  artifact_store {
-    location = aws_s3_bucket.pipeline_artifacts.bucket
-    type     = "S3"
-  }
-
-  # Stage 1: Source from GitHub
-  stage {
-    name = "Source"
-    action {
-      name             = "GitHub_Source"
-      category         = "Source"
-      owner            = "AWS"
-      provider         = "CodeStarSourceConnection"
-      version          = "1"
-      output_artifacts = ["source_output"]
-
-      configuration = {
-        ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = var.github_repo
-        BranchName       = var.github_branch
-      }
-    }
-  }
-
-  # Stage 2: Build & deploy backend Lambda
-  stage {
-    name = "Build_Backend"
-    action {
-      name             = "Build_Lambda"
-      category         = "Build"
-      owner            = "AWS"
-      provider         = "CodeBuild"
-      version          = "1"
-      input_artifacts  = ["source_output"]
-      output_artifacts = ["backend_output"]
-
-      configuration = {
-        ProjectName = aws_codebuild_project.backend_build.name
-      }
-    }
-  }
-
-  # Stage 3: Build & deploy frontend
-  stage {
-    name = "Build_Frontend"
-    action {
-      name             = "Build_React"
-      category         = "Build"
-      owner            = "AWS"
-      provider         = "CodeBuild"
-      version          = "1"
-      input_artifacts  = ["source_output"]
-      output_artifacts = ["frontend_output"]
-
-      configuration = {
-        ProjectName = aws_codebuild_project.frontend_build.name
-      }
-    }
-  }
-
-  tags = local.common_tags
 }
 
 ###############################################################################
@@ -1064,18 +764,13 @@ output "frontend_bucket_name" {
 }
 
 output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID — needed for cache invalidation in CI/CD"
+  description = "CloudFront distribution ID"
   value       = aws_cloudfront_distribution.frontend.id
 }
 
 output "lambda_function_name" {
-  description = "Lambda function name — needed for CI/CD backend deploy"
+  description = "Lambda function name"
   value       = aws_lambda_function.feedback_api.function_name
-}
-
-output "github_connection_arn" {
-  description = "CodeStar connection — MUST be manually authorised in AWS Console"
-  value       = aws_codestarconnections_connection.github.arn
 }
 
 output "dynamodb_table_name" {
