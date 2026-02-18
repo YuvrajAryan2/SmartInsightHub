@@ -1,4 +1,5 @@
 # Node
+*.zip
 node_modules/
 dist/
 .env
